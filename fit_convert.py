@@ -1,102 +1,27 @@
 #%%
-import os, sys
-sys.path.append('.')
-sys.path.append('..')
-from configs import project_root, mimic_root
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import matplotlib.pyplot as plt
-import pickle as pk
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
-from catboost import CatBoostClassifier, Pool, metrics, cv
-from sklearn.metrics import accuracy_score
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, auc, average_precision_score, precision_recall_curve, roc_curve
-from sklearn.decomposition import PCA
-import numpy as np
-import pandas as pd
-import pickle as pk
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from xgboost import XGBClassifier
-import os, sys
-from time import time
-from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
-from sklearn.linear_model import LogisticRegression
+%load_ext autoreload
+%autoreload 2
 #%%
-class TTE:
-
-    class diagnoses:
-        pass
-
-    def __init__(self):
-        with open(f'{project_root}/saved/blob.pk', 'rb') as fl:
-            blob = pk.load(fl)
-        self.first_diagnosis = blob['first_diagnosis']
-        self.visits = blob['visits']
-        self.next_visits = blob['next_visits']
-
-        self.diagnoses = TTE.diagnoses()
-        self.diagnoses.visit = blob['diagnoses']['visit']
-
-tte = TTE()
+import os, sys
+import matplotlib.pyplot as plt
+import helpers
 #%%
-chapter = 'F'
-early_diag = 1
-time_window = 'month'
-
-censor_future = True
-use_history = True
-# use_emb = 'kane/biogpt100'
+tte = helpers.TTE()
+#%%
 use_emb = None
-nearly = 0
-nconsidered = 0
-nhadm = 0
-nmonth = 0
-
+use_medbert = True
 embdict = None
 if use_emb:
     with open(f'{project_root}/../data/icd10/embeddings/{use_emb}.pk', 'rb') as fl:
         embdict = pk.load(fl)
-
-visit_has_code = lambda v, match: any([c[:len(match)] == match for c in tte.diagnoses.visit[v]])
-
-hsamples = []
-for patient in tqdm(tte.visits.keys()):
-
-    early_case = False
-    for code, h in tte.first_diagnosis[patient].items():
-        if chapter == code[0] and h == tte.visits[patient][0]:
-            early_case = True
-    if early_case:
-        nearly += 1
-        continue
-
-    nconsidered += 1
-
-    running_hist = []
-    for h in tte.visits[patient][early_diag:-1]:
-
-        nhadm += 1
-        nmonth += len(tte.next_visits[h][time_window])
-
-        if censor_future:
-            # NOTE: current visit should not have the target diagnosis
-            #  therefore, after a control converts to a case, don't keep scanning
-            if visit_has_code(h, chapter):
-                break
-
-        iscase = False
-        for hnxt in tte.next_visits[h][time_window]:
-            if visit_has_code(hnxt, chapter):
-                iscase = True
-
-        running_hist += [h]
-        hsamples += [(list.copy(running_hist) if use_history else [h], iscase)]
-
-len(tte.visits), nearly, nconsidered, nhadm, nmonth, len(hsamples), len([s for s in hsamples if s[1]])
+#%%
+poshist = [len(h) for h, iscase in hsamples if iscase]
+neghist = [len(h) for h, iscase in hsamples if not iscase]
+plt.figure()
+plt.hist([poshist, neghist], bins=20)
+plt.ylim(0, 3000)
+plt.show()
+len(poshist)/len(neghist)
 # %%
 format_code = lambda c: c #[:4]
 vocab = dict()
@@ -107,8 +32,6 @@ for codes in tte.diagnoses.visit.values():
         if c not in vocab:
             vocab[c] = len(vocab)
 len(vocab)
-#%%
-# len([v for v in vocab if v not in embdict])
 #%%
 Xrows = []
 yrows = []
@@ -137,7 +60,28 @@ if embdict:
     embrows = np.array(embrows)
     X = np.concatenate([X, embrows], 1)
 y = np.array(yrows)
+
+
 X.shape, y.shape
+#%%
+
+if use_medbert:
+    emb_model = helpers.Inference.MedBERT()
+
+    for hls, iscase in tqdm(hsamples):
+        batch = dict(concept=[], age=[], abspos=[], segment=[], los=[])
+        [batch[prop].append(list()) for prop in batch]
+        for hi, h in enumerate(hls):
+            diags_in_visit = tte.diagnoses.visit[h]
+            batch['concept'][-1] += list(diags_in_visit.keys())
+            batch['age'][-1] += [60]*len(diags_in_visit)
+            batch['abspos'][-1] += [0]*len(diags_in_visit)
+            batch['segment'][-1] += [hi]*len(diags_in_visit)
+            batch['los'][-1] += [1]*len(diags_in_visit)
+
+        emb_model(**batch)
+
+        break
 #%%
 X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.75, random_state=0)
 #%%
