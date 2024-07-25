@@ -14,6 +14,9 @@ class TTE:
     class diagnoses:
         pass
 
+    class when:
+        pass
+
     def __init__(self):
         with open(f'{project_root}/saved/blob.pk', 'rb') as fl:
             blob = pk.load(fl)
@@ -23,34 +26,36 @@ class TTE:
 
         self.diagnoses = TTE.diagnoses()
         self.diagnoses.visit = blob['diagnoses']['visit']
+        self.when.admit = blob['when']['admit']
 
     def gather_samples(self,
-        chapter=None, time_window='month',
+        target_code=None,
+        time_window='year', # set None to set indefinite time window
         censor_future=True,
-        use_history=True
+        use_history=True,
+        per_patient=None # 'first' to only count each patient as a case once
     ):
 
         nearly = 0
         nconsidered = 0
         nhadm = 0
-        nmonth = 0
         n_onevisit = 0
         n_cases = 0
         n_controls = 0
 
-        visit_has_code = lambda v, match: any([c[:len(match)] == match for c in self.diagnoses.visit[v]])
-
+        prefix_is_same = lambda match, ref: match == ref[:len(match)]
+        visit_has_code = lambda v, match: any([prefix_is_same(match, c) for c in self.diagnoses.visit[v]])
         hsamples = []
         for patient in tqdm(self.visits.keys()):
-
-            early_case = False
-            for code, h in self.first_diagnosis[patient].items():
-                if chapter == code[0] and h == self.visits[patient][0]:
-                    early_case = True
 
             if len(self.visits[patient]) < 2:
                 n_onevisit += 1
                 continue
+
+            early_case = False
+            for code, h in self.first_diagnosis[patient].items():
+                if prefix_is_same(target_code, code) and h == self.visits[patient][0]:
+                    early_case = True
 
             if early_case:
                 nearly += 1
@@ -59,26 +64,30 @@ class TTE:
             nconsidered += 1
 
             running_hist = []
-            for h in self.visits[patient][:-1]:
+            for vi, h in enumerate(self.visits[patient][:-1]):
 
                 nhadm += 1
-                nmonth += len(self.next_visits[h][time_window])
 
                 if censor_future:
                     # NOTE: current visit should not have the target diagnosis
                     #  therefore, after a control converts to a case, don't keep scanning
-                    if visit_has_code(h, chapter):
+                    if visit_has_code(h, target_code):
                         break
 
                 # NOTE: It is possible for the same patient to generate 1+ next diagnosis cases
                 #  e.g. there are two visits close together for which both have the targ diag within the next month
                 iscase = False
-                for hnxt in self.next_visits[h][time_window]:
-                    if visit_has_code(hnxt, chapter):
+                future_visits_inrange = self.next_visits[h][time_window] \
+                    if time_window is not None else self.visits[patient][vi+1:]
+                for hnxt in future_visits_inrange:
+                    if visit_has_code(hnxt, target_code):
                         iscase = True
 
                 running_hist += [h]
-                hsamples += [(list.copy(running_hist) if use_history else [h], iscase)]
+                hsamples += [(patient, list.copy(running_hist) if use_history else [h], iscase)]
+
+                if iscase and per_patient == 'first':
+                    break
 
             if iscase: n_cases += 1
             else: n_controls += 1
