@@ -43,10 +43,17 @@ project_root = '/home/ulzee/gpt/next_visit'
 
 ### Basic dependancies
 
+Python >=3.10 is required.
+
 ```bash
 numpy
 pandas
 pickle
+icd-mappings
+xgboost
+hyperopt
+plotly
+matplotlib
 ```
 
 ### Advanced dependancies (WIP)
