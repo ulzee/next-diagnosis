@@ -11,14 +11,17 @@ from sklearn.metrics import average_precision_score, roc_auc_score, f1_score
 #%%
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, default='linear')
+parser.add_argument('--code', type=str, required=True)
 parser.add_argument('--penalty', type=str, default=None)
 parser.add_argument('--predict_split', type=str, default='test')
 parser.add_argument('--bootstrap', type=int, default=10)
 args = parser.parse_args()
 #%%
 baseline_tag = f'linear_p{args.penalty}'
-if not os.path.exists(f'saved/{baseline_tag}'):
-    os.mkdir(f'saved/{baseline_tag}')
+if not os.path.exists(f'saved/{args.code}'):
+    os.mkdir(f'saved/{args.code}')
+if not os.path.exists(f'saved/{args.code}/{baseline_tag}'):
+    os.mkdir(f'saved/{args.code}/{baseline_tag}')
 #%% #[:4]
 tte = helpers.TTE()
 #%%
@@ -42,7 +45,7 @@ datamats = helpers.generate_data_splits(tte, all_samples, vocab)
 # LR
 lreg = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
 #%%
-with open(f'saved/{baseline_tag}/model.pk', 'wb') as fl:
+with open(f'saved/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
     pk.dump(lreg, fl)
 #%%
 ypred = lreg.predict_proba(datamats['test'][0])[:, 1]
@@ -66,5 +69,5 @@ pd.DataFrame(dict(
     metrics=['pr', 'roc', 'f1'],
     ests=[ap_est, roc_est, f1_est],
     stds=[ap_std, roc_std, f1_std]
-)).to_csv(f'saved/{baseline_tag}/scores_{args.predict_split}_boot{args.bootstrap}.csv', index=False)
+)).to_csv(f'saved/{args.code}/{baseline_tag}/scores_{args.predict_split}_boot{args.bootstrap}.csv', index=False)
 # %%
