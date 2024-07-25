@@ -45,8 +45,9 @@ histdf
 #%%
 lsd = { d: histdf[d].values for d in ['icd10', 'admittime_dt', 'hadm_id', 'icd_version'] }
 # %%
-early_diag = 1
+# early_diag = 1
 
+ntoo_few = 0
 nvalid = 0
 nearly = 0
 nhadms = 0
@@ -80,22 +81,14 @@ for i in tqdm(range(len(lsd['hadm_id']))):
     u_adids = np.array(u_adids)
     visits[patient] = u_adids #list(zip(u_adids, u_adts))
 
-    # too few obs for bench
-    if len(u_adids) <= early_diag + 1:
+    # too few obs for next visit bench
+    if len(u_adids) < 2:
+        ntoo_few += 1
         continue
 
     nvalid += 1
 
-    # this should be done on a per disease task basis
-    # early_convert = False
-    # for adm in u_adids[:early_diag]:
-    #     if any([chapter == c[0] for c in icds[adids == adm]]):
-    #         early_convert = True
-    # if early_convert:
-    #     nearly += 1
-        # continue
-
-    for hadmi in range(early_diag, len(u_adids) - 1):
+    for hadmi in range(len(u_adids) - 1):
         future_times = u_adts[hadmi+1:]
         future_hs = u_adids[hadmi+1:]
         current_hadm = u_adids[hadmi]
@@ -112,58 +105,12 @@ for i in tqdm(range(len(lsd['hadm_id']))):
 
 nvalid, nearly, nhadms, nmonth, nyear
 # %%
-# example case control parse
-chapter = 'F'
-early_diag = 1
-tte = 'month'
-nearly = 0
-nconsidered = 0
-nhadm = 0
-nmonth = 0
-
-visit_has_code = lambda v, match: any([c[:len(match)] == match for c in diagnoses['visit'][v]])
-
-hsamples = []
-for patient in tqdm(visits.keys()):
-
-    early_case = False
-    for code, h in first_diagnosis[patient].items():
-        if chapter == code[0] and h == visits[patient][0]:
-            early_case = True
-    if early_case:
-        nearly += 1
-        continue
-
-    nconsidered += 1
-
-    # NOTE: after a control converts to a case, don't keep scanning
-    running_hist = []
-    for h in visits[patient][:-1]:
-
-        nhadm += 1
-        nmonth += len(next_visits[h][tte])
-
-        # NOTE: current visit is guaranteed not to have the target diagnosis
-        #  visits after first diagnosis should not be considered
-        # if visit_has_code(h, chapter):
-        #     break
-
-        iscase = False
-        for hnxt in next_visits[h][tte]:
-            if visit_has_code(hnxt, chapter):
-                iscase = True
-
-        hsamples += [(h, iscase)]
-        running_hist += [h]
-
-len(visits), nearly, nconsidered, nhadm, nmonth, len(hsamples), len([s for s in hsamples if s[1]])
-# %%
 with open(f'{project_root}/saved/blob.pk', 'wb') as fl:
     pk.dump(dict(
         next_visits=next_visits,
         first_diagnosis=first_diagnosis,
         visits=visits,
         diagnoses=diagnoses,
-        when=when
+        when=when,
     ), fl)
 # %%

@@ -92,4 +92,9 @@ python scripts/create_next_visit_dataset.py
 
 At this point, it is possible to run a few baseline methods for the next visit diagnosis task.
 
+Some examples:
 
+```bash
+python fit_baselines.py --model linear
+python fit_baselines.py --model linear --penalty l2
+```
