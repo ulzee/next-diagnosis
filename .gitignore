@@ -1,3 +1,6 @@
 saved/blob.pk
 saved/hosp-diagnoses_icd.csv
 __pycache__
+saved/*
+scratch.py
+configs.py

@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 import pickle as pk
 import pandas as pd
+import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, roc_curve, precision_recall_curve
 from xgboost import XGBClassifier
 from hyperopt import hp, Trials, fmin, tpe, STATUS_OK
@@ -17,12 +18,19 @@ parser.add_argument('--code', type=str, required=True)
 parser.add_argument('--penalty', type=str, default=None)
 parser.add_argument('--predict_split', type=str, default='test')
 parser.add_argument('--bootstrap', type=int, default=10)
+parser.add_argument('--max_depth', type=int, default=None)
+parser.add_argument('--n_estimators', type=int, default=None)
 args = parser.parse_args()
 #%%
 if args.model == 'linear':
     baseline_tag = f'linear_p{args.penalty}'
 elif args.model == 'xgb':
     baseline_tag = f'xgb'
+    if args.max_depth is not None:
+        baseline_tag += f'_d{args.max_depth}'
+    if args.n_estimators is not None:
+        baseline_tag += f'_e{args.n_estimators}'
+print(baseline_tag)
 
 if not os.path.exists(f'saved/scores'):
     os.mkdir(f'saved/scores')
@@ -53,34 +61,42 @@ datamats = helpers.generate_data_splits(tte, all_samples, vocab)
 if args.model == 'linear':
     mdl = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
 elif args.model == 'xgb':
-    print('Finding hyperparams...')
+    if args.max_depth is not None and args.n_estimators is not None:
+        print('Running XGB with given settings')
+        mdl = XGBClassifier(
+            max_depth=args.max_depth,
+            n_estimators=args.n_estimators
+        ).fit(*datamats['train'])
+    else:
+        raise 'Not implemented'
+        # print('Finding hyperparams...')
 
-    space = {
-        'max_depth': hp.quniform("max_depth", 2, 20, 1),
-        'n_estimators': hp.quniform("n_estimators", 10, 200, 1),
-    }
+        # space = {
+        #     'max_depth': hp.quniform("max_depth", 2, 20, 1),
+        #     'n_estimators': hp.quniform("n_estimators", 10, 200, 1),
+        # }
 
-    def objective(space):
-        clf = XGBClassifier(
-            n_estimators = int(space['n_estimators']),
-            max_depth = int(space['max_depth']),
-        )
-        clf.fit(
-            *datamats['train'],
-            eval_set=[datamats['val']],
-            verbose=False)
-        return { 'loss': clf.evals_result()['validation_0']['logloss'][-1], 'status': STATUS_OK }
+        # def objective(space):
+        #     clf = XGBClassifier(
+        #         n_estimators = int(space['n_estimators']),
+        #         max_depth = int(space['max_depth']),
+        #     )
+        #     clf.fit(
+        #         *datamats['train'],
+        #         eval_set=[datamats['val']],
+        #         verbose=False)
+        #     return { 'loss': clf.evals_result()['validation_0']['logloss'][-1], 'status': STATUS_OK }
 
-    trials = Trials()
+        # trials = Trials()
 
-    best_hyperparams = fmin(
-        fn = objective,
-        space = space,
-        algo = tpe.suggest,
-        max_evals = 10,
-        trials = trials)
+        # best_hyperparams = fmin(
+        #     fn = objective,
+        #     space = space,
+        #     algo = tpe.suggest,
+        #     max_evals = 10,
+        #     trials = trials)
 
-    print('Best:', best_hyperparams)
+        # print('Best:', best_hyperparams)
 #%%
 with open(f'saved/scores/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
     pk.dump(mdl, fl)
@@ -88,7 +104,8 @@ with open(f'saved/scores/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
 ypred = mdl.predict_proba(datamats['test'][0])[:, 1]
 ytarg = datamats['test'][1]
 #%%
-bixs = np.load('artifacts/splits/boots.npy')
+np.random.seed(0)
+bixs = [np.random.choice(len(ypred), size=len(ypred), replace=True) for _ in range(args.bootstrap)]
 metrics = [
     average_precision_score,
     roc_auc_score,
@@ -110,4 +127,5 @@ pd.DataFrame(dict(
 # %%
 tpr, fpr, _ = roc_curve(ytarg, ypred)
 pr, re, _ = precision_recall_curve(ytarg, ypred)
-np.save(f'saved/scores/{args.code}/{baseline_tag}/curves.npy', [tpr, fpr, pr, re])
+with open(f'saved/scores/{args.code}/{baseline_tag}/curves.pk', 'wb') as fl:
+    pk.dump([tpr, fpr, pr, re], fl)

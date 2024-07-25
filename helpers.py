@@ -1,4 +1,4 @@
-import torch
+
 from os.path import join
 import sys
 from configs import project_root
@@ -147,6 +147,7 @@ class Inference:
             from transformers import BertConfig
             from hydra import compose, initialize
             from features.tokenizer import EHRTokenizer
+            import torch
 
             with initialize(config_path='saved/medbert'):
                 cfg: compose(config_name='pretrain_mimiciv.yaml')
