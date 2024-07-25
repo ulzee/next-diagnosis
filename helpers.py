@@ -4,6 +4,7 @@ import sys
 from configs import project_root
 import pickle as pk
 from tqdm import tqdm
+import numpy as np
 
 class DotDict(dict):
     def __getattr__(self, attr):
@@ -102,6 +103,36 @@ class TTE:
                 controls=n_controls,
             )
         )
+
+def load_splits(split_dir='artifacts/splits'):
+    return { phase: np.genfromtxt(f'{split_dir}/{phase}_ids.txt') for phase in ['train', 'val', 'test'] }
+
+def generate_data_splits(tte, hsamples, vocab, split_dir='artifacts/splits', format_code=lambda c: c):
+
+    splits = load_splits(split_dir)
+
+    datamats = dict()
+    for phase, pids in splits.items():
+        pids = { i: True for i in pids }
+
+        Xrows = []
+        yrows = []
+        for pid, hls, iscase in tqdm(hsamples):
+            if pid not in pids: continue
+            row = np.zeros(len(vocab))
+            for h in hls:
+                for c in tte.diagnoses.visit[h]:
+                    match_c = format_code(c)
+                    if match_c in vocab:
+                        row[vocab[match_c]] += 1
+            Xrows += [row]
+            yrows += [iscase]
+
+        X = np.array(Xrows)
+        y = np.array(yrows)
+
+        datamats[phase] = (X, y)
+    return datamats
 
 class Inference:
     class MedBERT:
