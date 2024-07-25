@@ -103,5 +103,7 @@ Some examples:
 
 ```bash
 python fit_baselines.py --model linear
-python fit_baselines.py --model linear --penalty l2
+python fit_baselines.py --model xgb --max_depth 10 --n_estimators 100
 ```
+
+![patients](https://github.com/ulzee/next-diagnosis/blob/master/images/bench.png?raw=true)
