@@ -74,6 +74,7 @@ len(visit_times)
 #%%
 visit_times_inorder = sorted(visit_times, key=lambda ls: ls[0][0])
 plt.figure(figsize=(10, 4))
+plt.title(target_icd)
 all_times = []
 all_pixs = []
 all_before_times = []
