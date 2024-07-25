@@ -7,7 +7,9 @@ import argparse
 import numpy as np
 import pickle as pk
 import pandas as pd
-from sklearn.metrics import average_precision_score, roc_auc_score, f1_score
+from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, roc_curve, precision_recall_curve
+from xgboost import XGBClassifier
+from hyperopt import hp, Trials, fmin, tpe, STATUS_OK
 #%%
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, default='linear')
@@ -17,11 +19,17 @@ parser.add_argument('--predict_split', type=str, default='test')
 parser.add_argument('--bootstrap', type=int, default=10)
 args = parser.parse_args()
 #%%
-baseline_tag = f'linear_p{args.penalty}'
-if not os.path.exists(f'saved/{args.code}'):
-    os.mkdir(f'saved/{args.code}')
-if not os.path.exists(f'saved/{args.code}/{baseline_tag}'):
-    os.mkdir(f'saved/{args.code}/{baseline_tag}')
+if args.model == 'linear':
+    baseline_tag = f'linear_p{args.penalty}'
+elif args.model == 'xgb':
+    baseline_tag = f'xgb'
+
+if not os.path.exists(f'saved/scores'):
+    os.mkdir(f'saved/scores')
+if not os.path.exists(f'saved/scores/{args.code}'):
+    os.mkdir(f'saved/scores/{args.code}')
+if not os.path.exists(f'saved/scores/{args.code}/{baseline_tag}'):
+    os.mkdir(f'saved/scores/{args.code}/{baseline_tag}')
 #%% #[:4]
 tte = helpers.TTE()
 #%%
@@ -42,13 +50,42 @@ print('# controls:', len([h for h in all_samples if not h[-1]]))
 #%%
 datamats = helpers.generate_data_splits(tte, all_samples, vocab)
 #%%
-# LR
-lreg = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
+if args.model == 'linear':
+    mdl = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
+elif args.model == 'xgb':
+    print('Finding hyperparams...')
+
+    space = {
+        'max_depth': hp.quniform("max_depth", 2, 20, 1),
+        'n_estimators': hp.quniform("n_estimators", 10, 200, 1),
+    }
+
+    def objective(space):
+        clf = XGBClassifier(
+            n_estimators = int(space['n_estimators']),
+            max_depth = int(space['max_depth']),
+        )
+        clf.fit(
+            *datamats['train'],
+            eval_set=[datamats['val']],
+            verbose=False)
+        return { 'loss': clf.evals_result()['validation_0']['logloss'][-1], 'status': STATUS_OK }
+
+    trials = Trials()
+
+    best_hyperparams = fmin(
+        fn = objective,
+        space = space,
+        algo = tpe.suggest,
+        max_evals = 10,
+        trials = trials)
+
+    print('Best:', best_hyperparams)
 #%%
-with open(f'saved/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
-    pk.dump(lreg, fl)
+with open(f'saved/scores/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
+    pk.dump(mdl, fl)
 #%%
-ypred = lreg.predict_proba(datamats['test'][0])[:, 1]
+ypred = mdl.predict_proba(datamats['test'][0])[:, 1]
 ytarg = datamats['test'][1]
 #%%
 bixs = np.load('artifacts/splits/boots.npy')
@@ -69,5 +106,8 @@ pd.DataFrame(dict(
     metrics=['pr', 'roc', 'f1'],
     ests=[ap_est, roc_est, f1_est],
     stds=[ap_std, roc_std, f1_std]
-)).to_csv(f'saved/{args.code}/{baseline_tag}/scores_{args.predict_split}_boot{args.bootstrap}.csv', index=False)
+)).to_csv(f'saved/scores/{args.code}/{baseline_tag}/scores_{args.predict_split}_boot{args.bootstrap}.csv', index=False)
 # %%
+tpr, fpr, _ = roc_curve(ytarg, ypred)
+pr, re, _ = precision_recall_curve(ytarg, ypred)
+np.save(f'saved/scores/{args.code}/{baseline_tag}/curves.npy', [tpr, fpr, pr, re])
