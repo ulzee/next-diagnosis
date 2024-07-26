@@ -150,7 +150,7 @@ def get_visit_history_embedding(
         for pid, hls, iscase in tqdm(hsamples):
             if pid not in pids: continue
             embs = []
-            for h in hls:
+            for h in hls[-1:]:
                 for c in tte.diagnoses.visit[h]:
                     match_c = format_code(c)
                     if match_c not in vocab: continue
