@@ -20,6 +20,8 @@ parser.add_argument('--predict_split', type=str, default='test')
 parser.add_argument('--bootstrap', type=int, default=10)
 parser.add_argument('--max_depth', type=int, default=None)
 parser.add_argument('--n_estimators', type=int, default=None)
+parser.add_argument('--use_embedding', type=str, default=None)
+parser.add_argument('--embedding_agg', type=str, default='sum')
 args = parser.parse_args()
 #%%
 if args.model == 'linear':
@@ -30,6 +32,10 @@ elif args.model == 'xgb':
         baseline_tag += f'_d{args.max_depth}'
     if args.n_estimators is not None:
         baseline_tag += f'_e{args.n_estimators}'
+if args.use_embedding is not None:
+    embname = args.use_embedding.split('/')[-1].split('.')[0]
+    baseline_tag += f'_emb-{embname}'
+    baseline_tag += f'_agg{args.embedding_agg}'
 print(baseline_tag)
 
 if not os.path.exists(f'saved/scores'):
@@ -58,6 +64,27 @@ print('# controls:', len([h for h in all_samples if not h[-1]]))
 #%%
 datamats = helpers.generate_data_splits(tte, all_samples, vocab)
 #%%
+if args.use_embedding:
+    with open(args.use_embedding, 'rb') as fl:
+        embdict = pk.load(fl)
+    for k, v in list(embdict.items()):
+        while len(k) > 3:
+            k = k[:len(k)-1]
+            if k not in embdict:
+                embdict[k] = v
+
+    agg_fn = dict(
+        sum=lambda ls: np.sum(ls, 0),
+        mean=lambda ls: np.mean(ls, 0)
+    )[args.embedding_agg]
+    embmats = helpers.get_visit_history_embedding(
+        tte, all_samples, vocab, embdict,
+        aggregation=agg_fn)
+
+    for phase, (X, y) in datamats.items():
+        datamats[phase][0] = np.concatenate([X, embmats[phase]], axis=1)
+#%%
+np.random.seed(0)
 if args.model == 'linear':
     mdl = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
 elif args.model == 'xgb':
@@ -68,35 +95,51 @@ elif args.model == 'xgb':
             n_estimators=args.n_estimators
         ).fit(*datamats['train'])
     else:
-        raise 'Not implemented'
-        # print('Finding hyperparams...')
+        print('Tuning hyperparams...')
 
-        # space = {
-        #     'max_depth': hp.quniform("max_depth", 2, 20, 1),
-        #     'n_estimators': hp.quniform("n_estimators", 10, 200, 1),
-        # }
+        space = {
+            'max_depth': hp.quniform("max_depth", 2, 10, 1),
+            'n_estimators': hp.quniform("n_estimators", 10, 100, 1),
+        }
 
-        # def objective(space):
-        #     clf = XGBClassifier(
-        #         n_estimators = int(space['n_estimators']),
-        #         max_depth = int(space['max_depth']),
-        #     )
-        #     clf.fit(
-        #         *datamats['train'],
-        #         eval_set=[datamats['val']],
-        #         verbose=False)
-        #     return { 'loss': clf.evals_result()['validation_0']['logloss'][-1], 'status': STATUS_OK }
+        def objective(space):
+            clf = XGBClassifier(
+                n_estimators = int(space['n_estimators']),
+                max_depth = int(space['max_depth']),
+            )
+            clf.fit(
+                *datamats['train'],
+                eval_set=[datamats['val']],
+                verbose=False)
 
-        # trials = Trials()
+            ypred = clf.predict_proba(datamats['val'][0])[:, 1]
+            ytarg = datamats['val'][1]
+            ap = average_precision_score(ytarg, ypred)
+            roc = roc_auc_score(ytarg, ypred)
+            final_loss = clf.evals_result()['validation_0']['logloss'][-1]
 
-        # best_hyperparams = fmin(
-        #     fn = objective,
-        #     space = space,
-        #     algo = tpe.suggest,
-        #     max_evals = 10,
-        #     trials = trials)
+            print(f'{final_loss:.4f} {ap:.4f} {roc:.4}')
 
-        # print('Best:', best_hyperparams)
+            return { 'loss': final_loss, 'status': STATUS_OK }
+
+        trials = Trials()
+
+        best_hyperparams = fmin(
+            fn = objective,
+            space = space,
+            algo = tpe.suggest,
+            max_evals = 10,
+            trials = trials,
+            rstate=np.random.default_rng(0))
+
+        print('Best:', best_hyperparams)
+        with open(f'saved/scores/{args.code}/{baseline_tag}/best_hp.pk', 'wb') as fl:
+            pk.dump(best_hyperparams, fl)
+
+        mdl = XGBClassifier(
+            max_depth=int(best_hyperparams['max_depth']),
+            n_estimators=int(best_hyperparams['n_estimators'])
+        ).fit(*datamats['train'])
 #%%
 with open(f'saved/scores/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
     pk.dump(mdl, fl)

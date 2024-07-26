@@ -131,7 +131,41 @@ def generate_data_splits(tte, hsamples, vocab, split_dir='artifacts/splits', for
         X = np.array(Xrows)
         y = np.array(yrows)
 
-        datamats[phase] = (X, y)
+        datamats[phase] = [X, y]
+    return datamats
+
+def get_visit_history_embedding(
+    tte, hsamples, vocab, embdict,
+    aggregation=lambda els: np.sum(els, 0),
+    split_dir='artifacts/splits', format_code=lambda c: c):
+
+    splits = load_splits(split_dir)
+
+    datamats = dict()
+    for phase, pids in splits.items():
+        pids = { i: True for i in pids }
+
+        Xrows = []
+        yrows = []
+        for pid, hls, iscase in tqdm(hsamples):
+            if pid not in pids: continue
+            embs = []
+            for h in hls:
+                for c in tte.diagnoses.visit[h]:
+                    match_c = format_code(c)
+                    if match_c not in vocab: continue
+                    if match_c in embdict:
+                        embs += [embdict[match_c]]
+                    else:
+                        pass # NOTE: when no embed can be matched, code will be skipped
+            if len(embs) == 0:
+                # due to matching issues, sometimes no embs are collected
+                embs = [np.zeros(len(next(iter(embdict.values()))))]
+            Xrows += [aggregation(embs)]
+
+        X = np.array(Xrows)
+
+        datamats[phase] = X
     return datamats
 
 class Inference:
