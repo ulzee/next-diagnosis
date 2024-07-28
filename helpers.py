@@ -15,19 +15,16 @@ class TTE:
     class diagnoses:
         pass
 
-    class when:
-        pass
-
     def __init__(self):
         with open(f'{project_root}/saved/blob.pk', 'rb') as fl:
             blob = pk.load(fl)
         self.first_diagnosis = blob['first_diagnosis']
+        self.patients = blob['patients']
         self.visits = blob['visits']
         self.next_visits = blob['next_visits']
 
         self.diagnoses = TTE.diagnoses()
         self.diagnoses.visit = blob['diagnoses']['visit']
-        self.when.admit = blob['when']['admit']
 
     def gather_samples(self,
         target_code=None,
@@ -47,15 +44,16 @@ class TTE:
         prefix_is_same = lambda match, ref: match == ref[:len(match)]
         visit_has_code = lambda v, match: any([prefix_is_same(match, c) for c in self.diagnoses.visit[v]])
         hsamples = []
-        for patient in tqdm(self.visits.keys()):
+        for patient in tqdm(self.patients):
+            visits = self.patients[patient]['visits']
 
-            if len(self.visits[patient]) < 2:
+            if len(visits) < 2:
                 n_onevisit += 1
                 continue
 
             early_case = False
             for code, h in self.first_diagnosis[patient].items():
-                if prefix_is_same(target_code, code) and h == self.visits[patient][0]:
+                if prefix_is_same(target_code, code) and h == visits[0]:
                     early_case = True
 
             if early_case:
@@ -65,7 +63,7 @@ class TTE:
             nconsidered += 1
 
             running_hist = []
-            for vi, h in enumerate(self.visits[patient][:-1]):
+            for vi, h in enumerate(visits[:-1]):
 
                 nhadm += 1
 
@@ -79,7 +77,7 @@ class TTE:
                 #  e.g. there are two visits close together for which both have the targ diag within the next month
                 iscase = False
                 future_visits_inrange = self.next_visits[h][time_window] \
-                    if time_window is not None else self.visits[patient][vi+1:]
+                    if time_window is not None else visits[vi+1:]
                 for hnxt in future_visits_inrange:
                     if visit_has_code(hnxt, target_code):
                         iscase = True
@@ -95,7 +93,7 @@ class TTE:
 
         return hsamples, dict(
             patient=dict(
-                total=len(self.visits),
+                total=len(self.patients),
                 early=nearly,
                 considered=nconsidered,
                 onevisit=n_onevisit,
@@ -107,7 +105,14 @@ class TTE:
 def load_splits(split_dir='artifacts/splits'):
     return { phase: np.genfromtxt(f'{split_dir}/{phase}_ids.txt') for phase in ['train', 'val', 'test'] }
 
-def generate_data_splits(tte, hsamples, vocab, split_dir='artifacts/splits', format_code=lambda c: c):
+def generate_data_splits(
+        tte,
+        hsamples,
+        vocab,
+        split_dir='artifacts/splits',
+        format_code=lambda c: c,
+        covariates=('age', 'sex'),
+        covariates_only=False):
 
     splits = load_splits(split_dir)
 
@@ -119,12 +124,24 @@ def generate_data_splits(tte, hsamples, vocab, split_dir='artifacts/splits', for
         yrows = []
         for pid, hls, iscase in tqdm(hsamples):
             if pid not in pids: continue
-            row = np.zeros(len(vocab))
-            for h in hls:
-                for c in tte.diagnoses.visit[h]:
-                    match_c = format_code(c)
-                    if match_c in vocab:
-                        row[vocab[match_c]] += 1
+            if covariates_only:
+                row = np.zeros(len(covariates))
+            else:
+                row = np.zeros(len(vocab) + len(covariates))
+                for h in hls:
+                    for c in tte.diagnoses.visit[h]:
+                        match_c = format_code(c)
+                        if match_c in vocab:
+                            row[vocab[match_c]] += 1
+
+            cindex = -len(covariates)
+            if 'sex' in covariates:
+                row[cindex] = 0 if tte.patients[pid]['sex'] == 'F' else 1
+                cindex += 1
+            if 'age' in covariates:
+                row[cindex] = tte.visits[hls[-1]]['age']/100
+                cindex += 1
+
             Xrows += [row]
             yrows += [iscase]
 
