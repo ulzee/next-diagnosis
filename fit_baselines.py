@@ -89,6 +89,8 @@ if args.use_embedding:
     for phase, (X, y) in datamats.items():
         datamats[phase][0] = np.concatenate([X, embmats[phase]], axis=1)
 #%%
+print('# of features:', datamats['train'][0].shape[1])
+#%%
 np.random.seed(0)
 if args.model == 'linear':
     mdl = LogisticRegression(random_state=0, penalty=args.penalty).fit(*datamats['train'])
