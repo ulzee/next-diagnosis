@@ -22,6 +22,8 @@ parser.add_argument('--max_depth', type=int, default=None)
 parser.add_argument('--n_estimators', type=int, default=None)
 parser.add_argument('--use_embedding', type=str, default=None)
 parser.add_argument('--embedding_agg', type=str, default='sum')
+parser.add_argument('--covariates_only', action='store_true', default=False)
+parser.add_argument('--no_covariates', action='store_true', default=False)
 args = parser.parse_args()
 #%%
 if args.model == 'linear':
@@ -55,14 +57,17 @@ for codes in tte.diagnoses.visit.values():
             vocab[c] = len(vocab)
 len(vocab)
 #%%
-target_code = 'F329'
-all_samples, _ = tte.gather_samples(target_code=target_code, time_window='year', censor_future=True, use_history=True)
+all_samples, _ = tte.gather_samples(target_code=args.code, time_window='year', censor_future=True, use_history=True)
 len(all_samples)
 #%%
 print('# cases   :', len([h for h in all_samples if h[-1]]))
 print('# controls:', len([h for h in all_samples if not h[-1]]))
 #%%
-datamats = helpers.generate_data_splits(tte, all_samples, vocab)
+datamats = helpers.generate_data_splits(
+    tte, all_samples, vocab,
+    covariates=[] if args.no_covariates else ['age', 'sex'],
+    covariates_only=args.covariates_only
+)
 #%%
 if args.use_embedding:
     with open(args.use_embedding, 'rb') as fl:
@@ -144,8 +149,8 @@ elif args.model == 'xgb':
 with open(f'saved/scores/{args.code}/{baseline_tag}/model.pk', 'wb') as fl:
     pk.dump(mdl, fl)
 #%%
-ypred = mdl.predict_proba(datamats['test'][0])[:, 1]
-ytarg = datamats['test'][1]
+ypred = mdl.predict_proba(datamats[args.predict_split][0])[:, 1]
+ytarg = datamats[args.predict_split][1]
 #%%
 np.random.seed(0)
 bixs = [np.random.choice(len(ypred), size=len(ypred), replace=True) for _ in range(args.bootstrap)]
